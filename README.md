@@ -7,11 +7,15 @@ in the input texture.
 
 Typically, an input file may be several megs, and the output textures will allow me to find newlines, find depth values and extract depth and columnar data.
 
+Output textures are fixed at 256x256 which allows logs up to 65536 entries long. This could be increased.
+
+Input textures will be the size of the input file rounded up to a npot.
+
 There will be the following steps to generate a log:
 
-* scan for newlines (fragment shader)
-* scan for depths (fragment shader)
-* scan for a particular column (fragment shader)
+* scan for newlines (fragment shader -> address of newline)
+* scan for depths (fragment shader -> depth values)
+* scan for a particular column (fragment shader -> column value)
 * generate a blank geometry (javascript/three.js)
 * move vertices to represent a digital log (vertex shader)
 
