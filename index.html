@@ -69,6 +69,9 @@ Allocate a line in a geometry to of the 65536 texture pixels
 	uniform sampler2D inp;
 	varying vec2 vUv;
 	
+	// still needs some work as it is not quite accurate
+	// prob need to subtract 1/2 an oside text coord from s & t, then add back when sampling.
+	
 	// address into input texture
 	float address(float s,float t,float iside,float oside) {
 		// t*totbytes + s*totbytes/oside
@@ -97,7 +100,7 @@ Allocate a line in a geometry to of the 65536 texture pixels
 		
 		// 
 		vec4 lasdata = texture2D(inp,vec2(s,t));
-		float nl = 13.0/255.0;
+		float nl = 10.0/255.0;
 		vec4 color = vec4(0.0,0.0,0.0,0.0);
 		if(lasdata.r==13.0/255.0||lasdata.g==13.0/255.0||lasdata.b==13.0/255.0||lasdata.a==13.0/255.0) {
 			color.r = s;
@@ -214,7 +217,7 @@ var test = function(iside,oside,texture,processed) {
 	} else if(processed) {
 		// dump out processed texture
 		var steps  = texture.byteLength/4;
-		for(var i=0;i<steps&&i<100;++i) {
+		for(var i=0;i<steps&&i<256;++i) {
 			var addr = i*4;
 			var byte3 = texture[addr];
 			var byte2 = texture[addr+1];
