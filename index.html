@@ -1,0 +1,411 @@
+<html>
+	<meta http-equiv="Content-Type" content="text/html;charset=ISO-8859-1"> 
+	<!--
+	Copyright 2015 Jonathan Watmough
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+	-->
+	
+	<!--
+	
+Notes:
+
+Stage 1
+Load LAS as texture
+256x256 destination texture	= 65536 fragments in plane
+On each fragment, scan for new line and depth column
+Output depth value or -999.25 if depth column not found
+Use newline within allocated area as indicator
+
+=> each pixel in output texture may indicate the location of a newline
+=> process newlines to a column (including depth)
+
+Stage 2
+
+Allocate a line in a geometry to of the 65536 texture pixels
+
+	
+	
+	
+	
+	-->
+<head>
+
+	<script src="three.js"></script>
+	<script src="dat.gui.min.js"></script>
+	
+<title>Load a LAS File as a Texture</title>
+
+<h2>LAS Loading Demo </h2>
+<p>Select a file using the file chooser below.
+<br />
+<input type="file" class='file_input' id='files' name="file" size=64 />
+
+</head>
+<body>
+
+<script id="vertexShader" type="x-shader/x-vertex">
+	varying vec2 vUv;
+	void main() {
+		vUv = uv;
+		gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+	}
+</script>
+
+// search for newlines in texture
+<script id="fragment_shader_find_newlines" type="x-shader/x-fragment">
+	uniform float iside;
+	uniform float oside;
+	uniform sampler2D inp;
+	varying vec2 vUv;
+	
+	// address into input texture
+	float address(float s,float t,float iside,float oside) {
+		// t*totbytes + s*totbytes/oside
+		float totbytes = iside*iside*4.0;
+		float addr = t*totbytes + s*totbytes/oside;
+		return addr;
+	}
+	
+	// input texture coords from address
+	vec2 texcoord(float addr,float iside,float oside) {
+		float bytesrow = iside*4.0;
+		float tp = addr/bytesrow;
+		float t = floor(tp)/iside;
+		float s = tp - floor(tp);
+		return vec2(s,t);
+	}
+	
+	void main() {
+		// compute byte linear address from s,t -- pretend we are in 1d
+		float s = vUv.x;
+		float t = vUv.y;
+		float inpbytes = iside*iside*4.0;			// total bytes in input texture
+		float resolution = oside*oside;				// total output slots
+		float bytesstep = inpbytes/resolution;		// bytes mapped to an output texel
+		float steps = bytesstep / 4.0;				// we sample rgba
+		
+		// 
+		vec4 lasdata = texture2D(inp,vec2(s,t));
+		float nl = 13.0/255.0;
+		vec4 color = vec4(0.0,0.0,0.0,0.0);
+		if(lasdata.r==13.0/255.0||lasdata.g==13.0/255.0||lasdata.b==13.0/255.0||lasdata.a==13.0/255.0) {
+			color.r = s;
+			color.g = t;
+			color.b = 1.0;
+			color.a = 1.0;
+		}
+		if(s==0.0/255.0 || t==0.0/255.0) {
+			color.r=1.0;
+			color.a=1.0;
+		}
+		gl_FragColor = color;
+		
+		// test addressing
+		float addr = address(s,t,iside,oside);
+		vec2 texaddr = texcoord(addr,iside,oside);
+		gl_FragColor = vec4(texaddr.x, texaddr.y,0.0,1.0);
+		
+		// search for a newline
+		color = vec4(0.0,0.0,0.0,0.0);
+		int done = 0;
+		float ss = texaddr.x;
+		float st = texaddr.y;
+		float sh8 = 256.0;
+		float sh16 = 256.0*256.0;
+		float sh24 = 256.0*256.0*256.0;
+		float sh32 = 256.0*256.0*256.0*256.0;
+		for(int i=0;i<1024;++i) {
+			// if a newline is found, return the address we *started at*
+			vec4 data = texture2D(inp,vec2(ss,1.0-st));
+			if(done==0&&(data.r==nl||data.g==nl||data.b==nl||data.a==nl)) {
+				float byte0 = fract(addr/sh8)*sh8;								// byte 0
+				float byte1 = fract((addr-byte0)/sh16)*sh8;						// byte 1
+				float byte2 = fract((addr-byte0-byte1*sh8)/sh24)*sh8;			// byte 2
+				float byte3 = fract((addr-byte0-byte1*sh8-byte2*sh16)/sh32)*sh8;// byte 2
+				color.r = steps/255.0;
+				color.g = byte2/255.0;
+				color.b = byte1/255.0;
+				color.a = byte0/255.0;
+				done=1;
+			}
+			if(done==1 || i>int(steps)) break;
+		}
+		gl_FragColor = color;
+	}
+</script>
+
+<script>
+
+
+
+//
+var test = function(iside,oside,texture,processed) {
+	// address into input texture
+	var address = function(s,t,iside,oside) {
+		// t*totbytes + s*totbytes/oside
+		var totbytes = iside*iside*4;
+		var addr = t*totbytes + s*totbytes/oside;
+		return addr;
+	}
+	// input texture coords from address
+	var texcoord = function(addr,iside,oside) {
+		var bytesrow = iside*4;
+		var tp = addr/bytesrow;
+		var t = Math.floor(tp)/iside;
+		var s = tp - Math.floor(tp);
+		return [s,t];
+	}
+	var texture2D = function(texture,s,t) {
+		var bytes = texture.byteLength;
+		var iside = Math.sqrt(bytes/4);
+		var oside = 256;
+		var bytesrow = iside*4;
+		var addr = address(s,t,iside,oside);
+		return [texture[addr++],texture[addr++],texture[addr++],texture[addr++]];
+	}
+	if(texture==undefined) {
+		// test addressing functions
+		// basic calcs
+		var totbytes = iside*iside*4;				// assuming RGBA texture
+		console.log("total input bytes: "+totbytes);
+		// steps through texels in output texture and map to address/texel in input texture
+		for(var t=0;t<1.0;t+=1.0/oside) {
+			for(var s=0;s<1.0;s+=1.0/oside) {
+				// calculate address from output textures
+				var addr = address(s,t,iside,oside);
+				var st = texcoord(addr,iside,oside);
+				console.log("s: " + s + " t: " + t + " -> addr: " + addr +
+				" -> s: " + st[0] + " t: " + st[1]);
+			}
+		}
+	} else if(processed==undefined){
+		// got a texture to test with - Uint8 bytes array
+		var totbytes = iside*iside*4;
+		var steps = totbytes / (oside*oside*4);
+		
+		// loop through output texels
+		for(var t=0;t<1.0;t+=1.0/oside) {
+			for(var s=0;s<1.0;s+=1.0/oside) {
+				// calculate address from output textures
+				var addr = address(s,t,iside,oside);
+				// calculate where to look in input texture
+				var st = texcoord(addr,iside,oside);
+				// step through input texels
+//				console.log("At address: " + addr);
+				for(i=0;i<steps;++i) {
+					var word = texture2D(texture,st[0],st[1]);
+					if(word[0]==0xa||word[1]==0xa||word[2]==0xa||word[3]==0xa) {
+						console.log("found newline at " + addr.toString(16));
+					}
+				}
+			}
+		}
+	} else if(processed) {
+		// dump out processed texture
+		var steps  = texture.byteLength/4;
+		for(var i=0;i<steps&&i<100;++i) {
+			var addr = i*4;
+			var byte3 = texture[addr];
+			var byte2 = texture[addr+1];
+			var byte1 = texture[addr+2];
+			var byte0 = texture[addr+3];
+			if(byte3==1) {
+				console.log("found 0xa at " + (byte2*256*256+byte1*256+byte0-2).toString(16));
+			}
+		}
+	}
+}
+// test with iside = 8, oside = 2
+//test(8,2);
+//test(8,4);
+//test(8,8);
+test(256,8)
+
+
+
+
+
+// Set up document
+document.querySelector('.file_input').addEventListener('change',function fileLoadedCB (evt) {
+    "use strict";
+	loadFile();
+},false);
+
+// calc how big a texture we need
+var textureSize = function(size)
+{
+	var sq = 1;
+	while(sq*sq*4 < size) {
+		sq *= 2;
+	}
+	if( sq<256 )
+		sq=256;
+	return sq;
+}
+
+// http://stackoverflow.com/a/26234684 Resize Array
+function resizeUint8(baseArrayBuffer, newByteSize) {
+    var resizedArrayBuffer = new ArrayBuffer(newByteSize),
+        len = baseArrayBuffer.byteLength,
+        resizeLen = (len > newByteSize)? newByteSize : len;
+
+        (new Uint8Array(resizedArrayBuffer, 0, resizeLen)).set(new Uint8Array(baseArrayBuffer, 0, resizeLen));
+
+    return resizedArrayBuffer;
+}
+
+// load a file
+var loadFile = function() {
+    "use strict";
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+        alert('Please select a file!');
+        return undefined;
+    }
+    var file = files[0];
+    var start = 0;
+    var stop = file.size - 1;
+	var texturesize = textureSize(file.size);
+	var newlength = texturesize*texturesize*4;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+		                if (evt.target.readyState === FileReader.DONE) { // DONE == 2
+							var uint8 = new Uint8Array(evt.target.result);
+							var buffer = /*ArrayBuffer.transfer*/resizeUint8(uint8,newlength);	// resize
+		                    var bytes = new Uint8Array(buffer);
+							setTexture(texturesize,bytes);
+//							test(texturesize,256,bytes);
+		                }
+		};
+    var safari = file.webkitSlice;
+
+    if( safari )
+        var blob = file.webkitSlice(start, stop + 1);
+    else
+        var blob = file.slice(start, stop + 1);
+    reader.readAsArrayBuffer(blob);
+}
+
+
+// set the scene size
+var WIDTH = 256,
+    HEIGHT = 256;
+
+// set some camera attributes
+var VIEW_ANGLE = 45,
+    ASPECT = WIDTH / HEIGHT,
+    NEAR = 0.1,
+    FAR = 1000;
+
+// create a WebGL renderer, camera
+// and a scene
+var renderer = new THREE.WebGLRenderer();
+var camera = new THREE.PerspectiveCamera(
+                   VIEW_ANGLE,
+                   ASPECT,
+                   NEAR,
+                   FAR );
+var scene = new THREE.Scene();
+
+// the camera starts at 0,0,0 so pull it back
+camera.position.z = 400;
+
+// start the renderer
+renderer.setSize(WIDTH, HEIGHT);
+
+// attach the render-supplied DOM element
+document.body.appendChild(renderer.domElement);
+
+// create a plane geometry
+var geometry = new THREE.PlaneGeometry(256,256);
+
+// render using a data texture
+
+// basic material
+var texture = THREE.ImageUtils.loadTexture( 'texture.jpg' );
+var datatexture;
+var material = new THREE.MeshBasicMaterial({map: texture});
+
+// create a mesh
+var mesh = new THREE.Mesh(geometry,material);
+
+scene.add(mesh);
+//renderer.render(scene,camera);
+
+// create a texture render target
+var s1_side = 256;
+var s1_scene = new THREE.Scene();
+var s1_camera = new THREE.OrthographicCamera(s1_side/-2,s1_side/2,s1_side/2,s1_side/-2,-1000,1000);
+var s1_outtexture = new THREE.WebGLRenderTarget( s1_side, s1_side, 
+	{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat } );
+var s1_material = new THREE.ShaderMaterial( { /*uniforms: { time: { type: "f", value: 0.0 } },*/
+	uniforms: {oside: {type: "f", value: 256 }, iside: {type: "f", value: 256 },
+			   inp: {type: "t", value: texture}},
+	vertexShader: document.getElementById( 'vertexShader' ).textContent,
+	fragmentShader: document.getElementById( 'fragment_shader_find_newlines' ).textContent,
+//	fragmentShader: document.getElementById( 'fragment_shader_pass_1' ).textContent,
+//	map: texture,
+});
+var s1_plane = new THREE.PlaneBufferGeometry( s1_side,s1_side );
+var s1_quad = new THREE.Mesh( s1_plane, s1_material );
+s1_quad.position.z = -100;
+s1_scene.add( s1_quad );
+
+var setTexture = function(size,bytes)
+{
+	// create data teture
+	datatexture = new THREE.DataTexture(bytes,size,size,THREE.RGBAFormat);
+	datatexture.minFilter = THREE.NearestFilter;
+	datatexture.magFilter = THREE.NearestFilter;
+	datatexture.generateMipmaps = false;
+	datatexture.needsUpdate = true;
+	s1_material.uniforms = {oside: {type: "f", value: 256 }, iside: {type: "f", value: size },
+				   inp: {type: "t", value: datatexture}};
+	s1_material.needsUpdate = true;
+
+	renderer.render( s1_scene, s1_camera, s1_outtexture );
+	
+	var rbuffer = new ArrayBuffer(256*256*4);
+	var rbytes  = new Uint8Array(rbuffer);
+	var gl = renderer.context;
+	renderer.context.readPixels(0,0,256,256,gl.RGBA,gl.UNSIGNED_BYTE,rbytes);
+	console.log("got rbytes");
+	test(size,256,rbytes,/*processed*/true);
+}
+
+// animation frames
+function animate() {
+		requestAnimationFrame( animate );
+		mesh.rotation.x += 0.005;
+		mesh.rotation.y += 0.01;
+		renderer.render( scene, camera );
+}
+// animation frames
+function animate2() {
+		requestAnimationFrame( animate2 );
+//		mesh.rotation.x += 0.005;
+//		mesh.rotation.y += 0.01;
+		// render indication of newlines to output texture
+		renderer.render( s1_scene, s1_camera, s1_outtexture );
+		material.map = s1_outtexture;
+		renderer.render( scene, s1_camera );
+};
+animate2();
+</script>
+
+</body>
+</html>
