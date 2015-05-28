@@ -27,3 +27,10 @@ whether to load the first or second position value, as each line will need a top
 
 * I have linear addressing over a texture working correctly with word accuracy when detecting lines,
 * Data is passed back in the rendered texture and matches the Javascript code,
+
+## To Do List
+
+* Write some simple shader-based parsing code to read depths and delimited values,
+* Write some Javascript code to package up some of these basic building blocks,
+* Generate a blank geometry with lines and triangles,
+* Read columnar data from texture to populate lines and triangles to be rendered,
